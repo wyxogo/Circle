@@ -1,39 +1,42 @@
-import random
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.spatial import KDTree
-import collections
+# import collections
+from PIL import Image
+import io
 
-# 初始化参数
 width = 0.25  
 height = 0.25  
 radius = 5e-3  
 min_distance = 12e-3  
 max_distance = 18e-3  
 
-# 初始化列表
-# centers = [(5e-3, 5e-3)]  # 圆心坐标列表
-# centers = [(width/2, height/2), (width/2-2*radius, height/2-2*radius), (width/2+2*radius, height/2+2*radius)]
-# centers = [(width/2, height/2), (width/2-max_distance, height/2-max_distance)]
 centers = [
-            # (radius, radius), 
-            # (width-radius, height-radius),
-            # (radius, height-radius),
-            # (width-radius, radius),
-            (width/2, height/2),
+            # (width/2-max_distance, height/2-max_distance),
+            # (width/2+max_distance, height/2+max_distance),
+            # (width/2-max_distance, height/2+max_distance),
+            # (width/2+max_distance, height/2-max_distance),
+            (radius, radius), 
+            (width-radius, height-radius),
+            (width-radius, radius),
+            (radius, height-radius),
+            # (width/2, height/2),
             (width*3/4, height/2),
             (width/2, height/4),
             (width/4, height/4),
-            (width/2, height*3/4)]
+            (width/2, height*3/4),
+            # (width/2, radius),
+            # (width-radius, height/2),
+            # (radius, height/2),
+            # (width/2, height-radius),
+
+            ]
 tree = KDTree(centers)
 
-
-def im_show(distances, centers):
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
-    # 绘制距离的分布图（分布直方图）
-    ax1.hist(distances, bins=100)
-    ax1.set_title('Distance Distribution')
-    # 绘制所有的圆（可视化）
+def im_show(distances, centers, cnt, curent_var):
+    _, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
+    ax1.hist(distances, bins=40, range=(min_distance, max_distance))
+    ax1.set_title(f'Distance Distribution, {cnt} Centers')
     
     ax2.set_xlim(0, width)
     ax2.set_ylim(0, height)
@@ -42,100 +45,100 @@ def im_show(distances, centers):
     for center in centers:
         circle = plt.Circle(center, radius, fill=False)
         ax2.add_artist(circle)
-    ax2.set_title('Circle Visualization')
-    plt.show()
+    ax2.set_title(f'Circle Visualization, var: {curent_var}')
+    img_buf = io.BytesIO()
+    plt.savefig(img_buf,format='png')
+    img = Image.open(img_buf)
+    return img
 
+def get_dist_list(check_centers, k = 1):
+    global centers
+    if k ==1:
+        distances, _ = tree.query(check_centers)
+    elif k == 2:
+        d, _ = tree.query(centers, k=2)
+        distances = d[:,1]
+    return distances.tolist()
 
-def sample_annulus(inner_radius, outer_radius, num_samples, center_x, center_y):
-    global tree 
-    r = np.sqrt(np.random.uniform(inner_radius**2, outer_radius**2, num_samples))
-    theta = np.random.uniform(0, 2*np.pi, num_samples)
-    # 转换为笛卡尔坐标
-    x = r * np.cos(theta) + center_x
-    y = r * np.sin(theta) + center_y
+def get_best_radius(center_dists, bins=100):
+    min_hist_idxs = []
+    hist, bin_edges = np.histogram(center_dists, range=(min_distance, max_distance),bins=bins)
+    min_hist = min(hist)
+    for i in range(len(hist)):
+        if hist[i]==min_hist:
+            min_hist_idxs.append(i)
+    best_radius = bin_edges[min_hist_idxs] 
+    return best_radius
+
+def is_in_region(point):
+    global tree, min_distance, max_distance, radius, width, height, centers
+    dist, _ = tree.query(point)
+    if (min_distance <= dist <= max_distance
+        and radius <= point[0] <= width-radius
+        and radius <= point[1] <= height-radius):
+        return True
+    return False
+
+def sample_circle(radius, num_points, center):
     points = []
-    for i in range(len(x)):
-        new_center = (x[i], y[i])
-        dist, _ = tree.query(new_center)
-        if (min_distance <= dist <= max_distance 
-            and radius <= x[i] <= width-radius 
-            and radius <= y[i] <= height-radius):
-            points.append(new_center)
-    return np.array(points)
+    c_idxs = []
+    for i in range(len(center)):
+        for r in radius:
+            angles = np.linspace(0, 2*np.pi, num_points)
+            x = r * np.cos(angles) + center[i][0]
+            y = r * np.sin(angles) + center[i][1]
+            p_set = np.column_stack((x, y))
+            for p in p_set:
+                if is_in_region(p):
+                    points.append(p)
+                    c_idxs.append(i)
+    return points, c_idxs
 
-def get_dist_list(centers):
-    distances = []
-    for i in range(len(centers)):
-        dist, _ = tree.query(centers[i], k=2)
-        distances.append(dist[1])
-    return distances
+def get_min_var_idx(points, c_idxs, bins=20):
+    global centers
+    center_dists = get_dist_list(centers, k=2)
+    point_dists = get_dist_list(points)
+    hist_var = []
+    for i in range(len(point_dists)):
+        hist, _ = np.histogram(np.append(center_dists, point_dists[i]), range=(min_distance, max_distance),bins=bins)
+        current_var = np.var(hist)
+        hist_var.append(current_var)
+    min_var = min(hist_var)
+    p_idxs = []
+    for i in range(len(hist_var)):
+        if hist_var[i]==min_var:
+            p_idxs.append(i)
+    p_idx = np.random.choice(p_idxs)
+    c_idx = c_idxs[p_idx]
+    return c_idx, p_idx
+    
 
-# def get_point_hist_var(center_distance, points_distance):
-#     all_distance = center_distance + points_distance
-#     all_distance = np.array(all_distance)
-#     # 计算平均值
-#     mean = np.mean(all_distance)
-#     # 计算每个数据点与平均值之差的绝对值
-#     diff = np.abs(points_distance - mean)
-#     # 计算总离差和
-#     total_diff = np.sum(diff)
-#     # 计算每个数据点的贡献率
-#     scores = diff/total_diff
-#     return scores.tolist()
-
-def get_point_hist_var(center_distance, points_distance):
-    hist_vars = []
-    for p in points_distance:
-        # 计算直方图
-        hist, bin_edges = np.histogram(center_distance+p, bins=80)
-        # 计算直方图的方差
-        hist_variance = np.var(hist)
-        hist_vars.append(hist_variance)
-    return hist_vars
-
-def bfs(centers, cnt=300, sample_cnt=200):
+def bfs(centers, cnt=1000, sample_cnt=50):
     global tree, min_distance, max_distance
-    queue = collections.deque()
-    # visited = set()
-    for i in range(len(centers)):
-        queue.append(centers[i])
-        # visited.add(centers[i])
+    queue = centers.copy()
+    imgs = []
     while queue:
-        # distances = get_dist_list(centers)
-        # im_show(distances, centers)
-        ver = queue.popleft()
-        # idxs = np.random.randint(0, len(centers), 4)
-        # centers_choices = [centers[i] for i in idxs]
-        # visited.add(c for c in choices)
-        # visited.add(ver)
-        # for c in centers_choices:
-        points = sample_annulus(min_distance, max_distance, sample_cnt, ver[0], ver[1])
-        centers_dist = get_dist_list(centers)
-        points_dist = get_dist_list(points)
-        hist_vars = get_point_hist_var(centers_dist, points_dist)
-        # if not points_scores.tolist():
-        if not hist_vars:
-            continue
-        max_hist_var = max(hist_vars)
-        # max_hist_var_idx = hist_vars.index(max_hist_var)
+        samples_radius = get_best_radius(get_dist_list(centers))
+        points, c_idxs = sample_circle(samples_radius, sample_cnt, queue)
+        if not points:
+            break
+        c_idx, p_idx = get_min_var_idx(points, c_idxs)
+        _ = queue.pop(c_idx)
+        p = points[p_idx]
+        new_center = p.tolist()
+        centers.append(new_center)
+        distances = get_dist_list(centers, 2)
+        imgs.append(im_show(distances, centers, len(centers), 0))
+        tree = KDTree(centers)
+        print(f'Center Coordinate {len(centers)}', new_center)
+        queue.append(new_center)
+        if len(centers)>=cnt:
+            return centers, imgs
+    return centers, imgs
 
-        for idx in range(0, len(hist_vars)):
-            if hist_vars[idx]>=max_hist_var*0.98:
-                new_center = points[idx].tolist()
-                dist, _ = tree.query(new_center)
-                if (min_distance <= dist <= max_distance):
-                    # new_center = points[min_score_idx].tolist()
-                    centers.append(new_center)
-                    tree = KDTree(centers)
-                    print(f'Center Coordinate {len(centers)}', new_center)
-                    queue.append(new_center)
-                    if len(centers)>=cnt:
-                        return centers
-                    # visited.add(new_center)                    
+centers, imgs = bfs(centers, cnt=1000, sample_cnt=50)
+distances = get_dist_list(centers, k=2)
 
-    return centers
-        
-centers = bfs(centers, cnt=1000, sample_cnt=500)
-distances = get_dist_list(centers)
-
-im_show(distances, centers)
+result = im_show(distances, centers, len(centers), 0)
+result.save("result.png")
+imgs[0].save("process.gif",format='GIF',append_images=imgs,save_all=True,duration=100,loop=0)
