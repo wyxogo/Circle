@@ -5,37 +5,36 @@ from scipy.spatial import KDTree
 from PIL import Image
 import io
 
-width = 0.25  
-height = 0.25  
+width = 0.5/2  
+height = 0.5/2  
 radius = 5e-3  
 min_distance = 12e-3  
 max_distance = 18e-3  
 
 centers = [
-            # (width/2-max_distance, height/2-max_distance),
-            # (width/2+max_distance, height/2+max_distance),
-            # (width/2-max_distance, height/2+max_distance),
-            # (width/2+max_distance, height/2-max_distance),
-            (radius, radius), 
-            (width-radius, height-radius),
-            (width-radius, radius),
-            (radius, height-radius),
-            # (width/2, height/2),
-            (width*3/4, height/2),
-            (width/2, height/4),
-            (width/4, height/4),
-            (width/2, height*3/4),
-            # (width/2, radius),
-            # (width-radius, height/2),
-            # (radius, height/2),
-            # (width/2, height-radius),
-
+            # [width/2-max_distance, height/2-max_distance],
+            # [width/2+max_distance, height/2+max_distance],
+            # [width/2-max_distance, height/2+max_distance],
+            # [width/2+max_distance, height/2-max_distance],
+            # [radius, radius], 
+            # [width-radius, height-radius],
+            # [width-radius, radius],
+            # [radius, height-radius],
+            [width/2, height/2],
+            # [width*3/4, height/2],
+            # [width/2, height/4],
+            # [width/4, height/2],
+            # [width/2, height*3/4],
+            # [width/2, radius],
+            # [width-radius, height/2],
+            # [radius, height/2],
+            # [width/2, height-radius],
             ]
 tree = KDTree(centers)
 
 def im_show(distances, centers, cnt, curent_var):
     _, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
-    ax1.hist(distances, bins=40, range=(min_distance, max_distance))
+    ax1.hist(distances, bins=20, range=(min_distance, max_distance))
     ax1.set_title(f'Distance Distribution, {cnt} Centers')
     
     ax2.set_xlim(0, width)
@@ -60,7 +59,7 @@ def get_dist_list(check_centers, k = 1):
         distances = d[:,1]
     return distances.tolist()
 
-def get_best_radius(center_dists, bins=100):
+def get_best_radius(center_dists, bins=200):
     min_hist_idxs = []
     hist, bin_edges = np.histogram(center_dists, range=(min_distance, max_distance),bins=bins)
     min_hist = min(hist)
@@ -108,20 +107,44 @@ def get_min_var_idx(points, c_idxs, bins=20):
     for i in range(len(hist_var)):
         if hist_var[i]==min_var:
             p_idxs.append(i)
-    p_idx = np.random.choice(p_idxs)
+    # p_idx = np.random.choice(p_idxs)
+    p_idx = p_idxs[-1]
     c_idx = c_idxs[p_idx]
     return c_idx, p_idx
-    
+
+def double_check_centers(centers, cnt=20):
+    global tree, min_distance, max_distance
+    centers = np.array(centers)
+    l = len(centers)//3
+    dist, ind = tree.query(centers, k=l)
+    sum_dist = np.sum(dist, axis=1)
+    # average_dist = np.sum(sum_dist)/(l*l)
+    sorted_idx = np.argsort(sum_dist)[::-1]
+    check_centers = centers[sorted_idx[:cnt]].tolist()
+    c = check_centers.copy()
+    for i in range(cnt):
+        if (c[i][0] < 1.2*radius 
+            or c[i][1] < 1.2*radius
+            or c[i][0] > width - 1.2*radius
+            or c[i][1] > height -1.2*radius):
+            check_centers.remove(c[i])
+    return check_centers
+
 
 def bfs(centers, cnt=1000, sample_cnt=50):
     global tree, min_distance, max_distance
     queue = centers.copy()
     imgs = []
+    ave_dist = np.inf
     while queue:
         samples_radius = get_best_radius(get_dist_list(centers))
         points, c_idxs = sample_circle(samples_radius, sample_cnt, queue)
         if not points:
-            break
+            q = double_check_centers(centers, cnt=5)
+            if q==queue:
+                break
+            queue = q
+            continue
         c_idx, p_idx = get_min_var_idx(points, c_idxs)
         _ = queue.pop(c_idx)
         p = points[p_idx]
@@ -135,9 +158,15 @@ def bfs(centers, cnt=1000, sample_cnt=50):
         if len(centers)>=cnt:
             return centers, imgs
     return centers, imgs
+import time
+time1 = time.time()
+centers, imgs = bfs(centers, cnt=1000, sample_cnt=8)
+time2 = time.time()
+print(f"Time: {time2-time1}")
 
-centers, imgs = bfs(centers, cnt=1000, sample_cnt=50)
 distances = get_dist_list(centers, k=2)
+
+# print(centers)
 
 result = im_show(distances, centers, len(centers), 0)
 result.save("result.png")
