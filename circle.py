@@ -16,11 +16,11 @@ centers = [
             # [width/2+max_distance, height/2+max_distance],
             # [width/2-max_distance, height/2+max_distance],
             # [width/2+max_distance, height/2-max_distance],
-            # [radius, radius], 
-            # [width-radius, height-radius],
-            # [width-radius, radius],
-            # [radius, height-radius],
-            [width/2, height/2],
+            [radius, radius], 
+            [width-radius, height-radius],
+            [width-radius, radius],
+            [radius, height-radius],
+            # [width/2, height/2],
             # [width*3/4, height/2],
             # [width/2, height/4],
             # [width/4, height/2],
@@ -31,6 +31,12 @@ centers = [
             # [width/2, height-radius],
             ]
 tree = KDTree(centers)
+
+def get_anchors(lb, step_ratio=1.5):
+    global width, height
+    return [[x,y] for x in np.arange(lb, width, lb*step_ratio) 
+               for y in np.arange(lb, width, lb*step_ratio)]
+
 
 def im_show(distances, centers, cnt, curent_var):
     _, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
@@ -130,20 +136,39 @@ def double_check_centers(centers, cnt=20):
             check_centers.remove(c[i])
     return check_centers
 
+get_anchors = get_anchors(5*radius, step_ratio=2)
+def generate_center_from_windows(w_idx, window_size=5*radius, lc=3):
+    global get_anchors, tree, max_distance, centers
+    while w_idx<len(get_anchors):
+        dist, idx = tree.query(get_anchors[w_idx], k=10)
+        nearest_cnt = np.sum(dist<window_size)
+        # if nearest_cnt==0:
+        #     centers.append(get_anchors[w_idx])
+        if nearest_cnt>lc:
+            w_idx+=1
+            continue
+        elif dist[0]<max_distance:
+            return centers[idx[0]], w_idx+1
+        else:
+            centers.append(get_anchors[w_idx])
+            return get_anchors[w_idx], w_idx+1
+    return None, w_idx
 
 def bfs(centers, cnt=1000, sample_cnt=50):
     global tree, min_distance, max_distance
+    w_idx = 0
     queue = centers.copy()
     imgs = []
-    ave_dist = np.inf
     while queue:
         samples_radius = get_best_radius(get_dist_list(centers))
         points, c_idxs = sample_circle(samples_radius, sample_cnt, queue)
         if not points:
-            q = double_check_centers(centers, cnt=5)
-            if q==queue:
+            # q = double_check_centers(centers, cnt=5)
+            q, w_idx = generate_center_from_windows(w_idx, lc=3)
+            if w_idx>=len(get_anchors):
                 break
-            queue = q
+            queue.append(q)
+            # w_idx += 1
             continue
         c_idx, p_idx = get_min_var_idx(points, c_idxs)
         _ = queue.pop(c_idx)
@@ -166,7 +191,6 @@ print(f"Time: {time2-time1}")
 
 distances = get_dist_list(centers, k=2)
 
-# print(centers)
 
 result = im_show(distances, centers, len(centers), 0)
 result.save("result.png")
